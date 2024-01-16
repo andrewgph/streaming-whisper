@@ -27,6 +27,7 @@ def eval(audio_path: str, model_path: str):
 
     print("Starting eval")
 
+    # Windows are size 3000 (30 seconds), stride 100 (1 second)
     for start_idx in range(0, mel_data.shape[1], 100):
         end_idx = start_idx + 3000
         print(f"Start index: {start_idx}, end index: {end_idx}")
@@ -41,31 +42,30 @@ def eval(audio_path: str, model_path: str):
         start_time = time.time()
         result_all = decoder_all.incremental_decode(mel_segment)
         mx.eval()
-        print(f"Result all: {result_all}", flush=True)
         end_time = time.time()
         latency_all_ms = 1000 * (end_time - start_time)
         latencies_all.append(latency_all_ms)
+
+        print(f"Result all: {result_all}", flush=True)
 
         mel_segment_streaming = mel_segment if start_idx == 0 else mel_diff
         start_time = time.time()
         result_streaming = decoder_streaming.incremental_decode(mel_segment_streaming)
         mx.eval()
-        print(f"Result streaming: {result_streaming}", flush=True)
         end_time = time.time()
         latency_streaming_ms = 1000 * (end_time - start_time)
         latencies_streaming.append(latency_streaming_ms)
+
+        print(f"Result streaming: {result_streaming}", flush=True)
         
         latencies_diff.append(latency_all_ms - latency_streaming_ms)
 
         print(f"Latency all: {latency_all_ms:.2f}, latency streaming: {latency_streaming_ms:.2f}", flush=True)
         print(f"Latency all mean: {np.mean(latencies_all):.2f} +/- {np.std(latencies_all):.2f}", flush=True)
         print(f"Latency streaming mean: {np.mean(latencies_streaming):.2f} +/- {np.std(latencies_streaming):.2f}", flush=True)
+        print(f"Latency diff mean: {np.mean(latencies_diff):.2f} +/- {np.std(latencies_diff):.2f}", flush=True)
         
         # TODO: compare accuracy of transcription for all vs streaming
-    
-    print(f"Average latency all: {sum(latencies_all) / len(latencies_all)}")
-    print(f"Average latency streaming: {sum(latencies_streaming) / len(latencies_streaming)}")
-    print(f"Average latency diff: {sum(latencies_diff) / len(latencies_diff)}")
 
 
 def parse_args():
