@@ -1,5 +1,3 @@
-# Copyright © 2023 Apple Inc.
-
 import os
 from functools import lru_cache
 from subprocess import CalledProcessError, run

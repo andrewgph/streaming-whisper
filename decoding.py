@@ -1,5 +1,3 @@
-# Copyright © 2023 Apple Inc.
-
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -116,7 +114,6 @@ class StreamingDecoder:
         # Only supports notimestamps, intention is that streaming would determine timestamps as it goes
         self.sot_sequence = tokenizer.sot_sequence_including_notimestamps
         self.eot = tokenizer.eot
-
         self.initial_tokens: Tuple[int] = list(self.sot_sequence)
         self.sample_begin: int = len(self.initial_tokens)
 
@@ -124,7 +121,7 @@ class StreamingDecoder:
         self.inference = Inference(model)
 
         # Only support a batch size of 1
-        self.current_tokens = mx.array(list(self.sot_sequence)).reshape(1, -1)
+        self.current_tokens = mx.array([[]], dtype=mx.int32)
         self.mel = mx.zeros((1, N_FRAMES, model.dims.n_mels),
                             dtype=mx.float16 if self.options.fp16 else mx.float32)
         self.num_inference_calls = 0
@@ -183,6 +180,45 @@ class StreamingDecoder:
             )
 
         return audio_features
+    
+
+    def _find_next_tokens_segment(self, tokens: mx.array, next_tokens: mx.array) -> Tuple[int, int]:
+        """Looks for a matching initial segment of tokens"""
+
+        for i in range(min(10, next_tokens.shape[1] - 5)):
+            for j in range(min(10, tokens.shape[1] - 5)):
+                if mx.all(next_tokens[0,i:i+5] == tokens[0,j:j+5]).item(): 
+                    l = min(next_tokens.shape[1] - i, tokens.shape[1] - j)
+                    matches = (next_tokens[0,i:i+l] == tokens[0,j:j+l]).tolist()
+                    matching_length = matches.index(False) if False in matches else l
+                    return i, i + matching_length
+    
+        return None, None
+    
+
+    def _check_previous_decode(self, audio_features: mx.array, tokens: mx.array) -> mx.array:
+        assert tokens.shape[0] == 1, "only supports a batch size of 1"
+
+        if tokens.size == 0:
+            return tokens
+
+        # Run model with the new audio features and the previous tokens
+        inference_tokens =  mx.concatenate([
+            mx.array(self.initial_tokens).reshape(1, -1),
+            tokens
+        ], axis=1)
+        logits = self.inference.logits(inference_tokens, audio_features)
+        self.inference.reset()
+
+        logits = logits[:, self.sample_begin:]
+        next_tokens = mx.argmax(logits, axis=-1)
+
+        start_idx, end_idx = self._find_next_tokens_segment(tokens, next_tokens)
+
+        if start_idx is None:
+            return mx.array([[]], dtype=mx.int32)
+        
+        return next_tokens[:, start_idx:end_idx]
 
 
     def _main_loop(self, audio_features: mx.array, tokens: mx.array) -> mx.array:
@@ -199,15 +235,14 @@ class StreamingDecoder:
 
                 # Greedy decoding of next token
                 if self.temperature == 0:
-                    next_tokens = logits.argmax(axis=-1)
+                    next_token = logits.argmax(axis=-1)
                 else:
-                    next_tokens = mx.random.categorical(logits=logits / self.temperature)
-                next_tokens = mx.argmax(logits, axis=-1)
+                    next_token = mx.random.categorical(logits=logits / self.temperature)
 
-                completed = mx.any(next_tokens == self.eot)
-                # Don't append eot as we'll continually append to the transcript
+                completed = mx.any(next_token == self.eot)
+                # Don't append eot as we'll continually update the tokens
                 if not completed:
-                    tokens = mx.concatenate([tokens, next_tokens[:, None]], axis=-1)
+                    tokens = mx.concatenate([tokens, next_token[:, None]], axis=-1)
 
                 if completed or tokens.shape[-1] > self.n_ctx:
                     break
@@ -230,23 +265,17 @@ class StreamingDecoder:
         # Encoder forward pass on new audio
         audio_features: mx.array = self._get_audio_features(self.mel)
 
-        # Drop old tokens
-        # TODO: need to align this with the dropped audio
-        if self.current_tokens.shape[-1] > 60:
-            self.current_tokens = mx.concatenate([
-                 mx.array(list(self.sot_sequence)).reshape(1, -1),
-                 self.current_tokens[:, self.sample_begin:][:, -60:]
-            ], axis=1)
-
         # Call the main sampling loop to iteratively decode new tokens from current audio
-        # TODO: redo the last few tokens, in case there is a better decoding for them now
-        # TODO: identify recent tokens that might have been misheard
-        last_token_idx = max(self.sample_begin, self.current_tokens.shape[1] - 20)
-        inference_tokens = self.current_tokens[:, :last_token_idx]
+        # First identify the tokens which can be reused from the previous decode
+        verified_tokens = self._check_previous_decode(
+            audio_features, self.current_tokens)
+        inference_tokens =  mx.concatenate([
+                 mx.array(self.initial_tokens).reshape(1, -1),
+                 verified_tokens
+        ], axis=1)
         tokens = self._main_loop(audio_features, inference_tokens)
 
         # Update list of tokens
-        self.current_tokens = tokens
+        self.current_tokens = tokens[:, self.sample_begin:]
 
-        return [self.tokenizer.decode(tokens.tolist()[0]).strip()]
-
+        return [self.tokenizer.decode(self.current_tokens.tolist()[0]).strip()], self.current_tokens[0]
