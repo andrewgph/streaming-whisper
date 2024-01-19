@@ -1,5 +1,3 @@
-# Copyright © 2023 Apple Inc.
-
 import base64
 import os
 import string
