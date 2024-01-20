@@ -252,6 +252,12 @@ class StreamingDecoder:
         return tokens
     
 
+    def add_empty_window(self, num_frames: int):
+        empty_mel = mx.zeros((1, num_frames, self.model.dims.n_mels),
+                            dtype=mx.float16 if self.options.fp16 else mx.float32)
+        self.mel = mx.concatenate([self.mel, empty_mel], axis=1)
+
+
     def incremental_decode(self, new_mel: mx.array) -> str:
         assert new_mel.shape[0] == 1, "streaming only a single audio stream is supported"
 
