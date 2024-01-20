@@ -11,6 +11,9 @@ from audio import N_FRAMES
 
 @dataclass(frozen=True)
 class DecodingOptions:
+    # whether to perform X->X "transcribe" or X->English "translate"
+    task: str = "transcribe"
+
     # language that the audio is in; uses detected language if None
     language: Optional[str] = None
 
@@ -25,6 +28,13 @@ class DecodingOptions:
 
     # implementation details
     fp16: bool = False  # use fp16 for most of the calculation
+
+
+@dataclass(frozen=True)
+class DecodingResult:
+    text: str
+    tokens: mx.array
+    new_text: str
 
 
 class Inference:
@@ -103,7 +113,7 @@ class StreamingDecoder:
             model.is_multilingual,
             num_languages=model.num_languages,
             language=language,
-            task="transcribe",
+            task=options.task,
         )
         self.tokenizer: Tokenizer = tokenizer
 
@@ -222,6 +232,8 @@ class StreamingDecoder:
 
 
     def _main_loop(self, audio_features: mx.array, tokens: mx.array) -> mx.array:
+        new_tokens = mx.array([[]], dtype=mx.int32)
+
         try: 
             for i in range(self.sample_len):
                 logits = self.inference.logits(tokens, audio_features)
@@ -243,13 +255,14 @@ class StreamingDecoder:
                 # Don't append eot as we'll continually update the tokens
                 if not completed:
                     tokens = mx.concatenate([tokens, next_token[:, None]], axis=-1)
+                    new_tokens = mx.concatenate([new_tokens, next_token[:, None]], axis=-1)
 
                 if completed or tokens.shape[-1] > self.n_ctx:
                     break
         finally:
             self.inference.reset()
 
-        return tokens
+        return tokens, new_tokens
     
 
     def add_empty_window(self, num_frames: int):
@@ -279,9 +292,15 @@ class StreamingDecoder:
                  mx.array(self.initial_tokens).reshape(1, -1),
                  verified_tokens
         ], axis=1)
-        tokens = self._main_loop(audio_features, inference_tokens)
+        tokens, new_tokens = self._main_loop(audio_features, inference_tokens)
 
         # Update list of tokens
         self.current_tokens = tokens[:, self.sample_begin:]
 
-        return [self.tokenizer.decode(self.current_tokens.tolist()[0]).strip()], self.current_tokens[0]
+        text = [self.tokenizer.decode(self.current_tokens.tolist()[0]).strip()]
+        new_text = [self.tokenizer.decode(new_tokens.tolist()[0]).strip()]
+
+        return DecodingResult(
+            text=text,
+            tokens=self.current_tokens[0],
+            new_text=new_text)
