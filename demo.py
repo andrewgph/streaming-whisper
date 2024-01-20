@@ -40,13 +40,16 @@ class IncrementalTranscriber:
         audio_arr = audio_bytes_to_np_array(audio_bytes)
         mel_arr = audio.log_mel_spectrogram(audio_arr, self.n_mels)
         mel_arr = mel_arr.reshape(1, *mel_arr.shape)
-        result_streaming, _ = self.streaming_decoder.incremental_decode(mel_arr)
-        print(f"{processing_time} : {result_streaming}")
+        result = self.streaming_decoder.incremental_decode(mel_arr)
+        print(f"{processing_time} : {result.new_text}")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate audio file.')
     parser.add_argument('--model_path', type=str, help='Path to the whisper mlx model.')
+    parser.add_argument('--language_code', type=str, default='en', help='Language in the input audio, default "en".')
+    parser.add_argument('--task', type=str, default='transcribe', help='Either "transcribe" or "translate".')
+    parser.add_argument('--device_name', type=str, default=None, help='Name for the input audio device.')
     args = parser.parse_args()
     return args
 
@@ -55,14 +58,17 @@ def demo():
     args = parse_args()
     
     model = load_model(args.model_path)
-    streaming_decoder = StreamingDecoder(model, DecodingOptions())
+    options = DecodingOptions(
+        task=args.task,
+        language=args.language_code)
+    streaming_decoder = StreamingDecoder(model, options)
     
     vad = Vad()
     vad.set_mode(3)
 
     incremental_transcriber = IncrementalTranscriber(streaming_decoder, vad, model.dims.n_mels)
 
-    mic_input = AudioInput()
+    mic_input = AudioInput(device_name_like=args.device_name)
     mic_input.run(incremental_transcriber.update)
 
 

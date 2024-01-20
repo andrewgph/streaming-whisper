@@ -48,6 +48,7 @@ def find_device_idx(device_name_like=None):
     for i in range(p.get_device_count()):
         info = p.get_device_info_by_index(i)
         if device_name_like in info['name']:
+            print(f'Found device "{info["name"]}" with index {i}')
             return i
 
     return p.get_default_input_device_info()['index']

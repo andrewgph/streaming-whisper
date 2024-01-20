@@ -68,31 +68,31 @@ def eval(audio_path: str, model_path: str):
         decoder_all = StreamingDecoder(model, options)
         
         start_time = time.time()
-        result_all, tokens_all = decoder_all.incremental_decode(mel_segment)
+        result_all = decoder_all.incremental_decode(mel_segment)
         mx.eval()
         end_time = time.time()
 
         latency_all_ms = 1000 * (end_time - start_time)
         latencies_all.append(latency_all_ms)
-        num_tokens_all.append(len(tokens_all))
+        num_tokens_all.append(len(result_all.tokens))
 
-        print(f"Result all: {result_all}")
+        print(f"Result all: {result_all.text}")
 
         mel_segment_streaming = mel_segment if start_idx == 0 else mel_diff
 
         start_time = time.time()
-        result_streaming, tokens_streaming = decoder_streaming.incremental_decode(mel_segment_streaming)
+        result_streaming = decoder_streaming.incremental_decode(mel_segment_streaming)
         mx.eval()
         end_time = time.time()
         
         latency_streaming_ms = 1000 * (end_time - start_time)
         latencies_streaming.append(latency_streaming_ms)
-        num_tokens_streaming.append(len(tokens_streaming))
+        num_tokens_streaming.append(len(result_streaming.tokens))
 
-        print(f"Result streaming: {result_streaming}")
+        print(f"Result streaming: {result_streaming.text}")
         
         latencies_diff.append(latency_all_ms - latency_streaming_ms)
-        levenstein_distances.append(levenstein_distance(tokens_all.tolist(), tokens_streaming.tolist()))
+        levenstein_distances.append(levenstein_distance(result_all.tokens.tolist(), result_streaming.tokens.tolist()))
         print(f"Levenstein distance: {levenstein_distances[-1]}")
 
     print(f"Latency all: {latency_all_ms:.2f}, latency streaming: {latency_streaming_ms:.2f}")
