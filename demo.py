@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 import time
+import mlx.core as mx
 from webrtcvad import Vad
 
 import audio
@@ -19,13 +20,25 @@ def audio_bytes_to_np_array(bytes_data):
 
 class IncrementalTranscriber:
 
-    def __init__(self, streaming_decoder: StreamingDecoder, vad: Vad, n_mels: int):
+    def __init__(self, streaming_decoder: StreamingDecoder, vad: Vad, n_mels: int, no_streaming: bool = False):
         self.streaming_decoder = streaming_decoder
         self.vad = vad
         self.n_mels = n_mels
+        self.no_streaming = no_streaming
+        self.audio_bytes_buffer = b''
 
     def update(self, audio_bytes: bytes):
         processing_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+        if self.no_streaming:
+            # Reset the streaming decoder to remove cached state
+            self.streaming_decoder = StreamingDecoder(self.streaming_decoder.model, self.streaming_decoder.options)
+            self.audio_bytes_buffer += audio_bytes
+            # Maintain buffer with 30 seconds of audio
+            # 16000 hz * 2 bytes per sample * 30 seconds
+            if len(self.audio_bytes_buffer) >= 16000 * 2 * 30:
+                self.audio_bytes_buffer = self.audio_bytes_buffer[-(16000 * 2 * 30):]
+            audio_bytes = self.audio_bytes_buffer
 
         contains_speech = False
         for i in range(0, len(audio_bytes), 320 * 3):
@@ -37,11 +50,15 @@ class IncrementalTranscriber:
             print(f"{processing_time} : [no speech detected]")
             return
 
+        start_time = time.time()
         audio_arr = audio_bytes_to_np_array(audio_bytes)
         mel_arr = audio.log_mel_spectrogram(audio_arr, self.n_mels)
         mel_arr = mel_arr.reshape(1, *mel_arr.shape)
         result = self.streaming_decoder.incremental_decode(mel_arr)
-        print(f"{processing_time} : {result.new_text}")
+        mx.eval()
+        end_time = time.time()
+        decoding_time_ms = int(1000 * (end_time - start_time))
+        print(f"{processing_time} : {decoding_time_ms}ms : {result.new_text}")
 
 
 def parse_args():
@@ -50,6 +67,7 @@ def parse_args():
     parser.add_argument('--language_code', type=str, default='en', help='Language in the input audio, default "en".')
     parser.add_argument('--task', type=str, default='transcribe', help='Either "transcribe" or "translate".')
     parser.add_argument('--device_name', type=str, default=None, help='Name for the input audio device.')
+    parser.add_argument('--no_streaming', action='store_true', help='Disable streaming if flag is present.')
     args = parser.parse_args()
     return args
 
@@ -66,7 +84,7 @@ def demo():
     vad = Vad()
     vad.set_mode(3)
 
-    incremental_transcriber = IncrementalTranscriber(streaming_decoder, vad, model.dims.n_mels)
+    incremental_transcriber = IncrementalTranscriber(streaming_decoder, vad, model.dims.n_mels, args.no_streaming)
 
     mic_input = AudioInput(device_name_like=args.device_name)
     mic_input.run(incremental_transcriber.update)
