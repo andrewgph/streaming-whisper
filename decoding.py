@@ -27,6 +27,7 @@ class DecodingOptions:
     suppress_blank: bool = True  # this will suppress blank outputs
 
     # implementation details
+    # TODO: this didn't seem to be implemented fully in the original code.
     fp16: bool = False  # use fp16 for most of the calculation
 
 
@@ -297,8 +298,8 @@ class StreamingDecoder:
         # Update list of tokens
         self.current_tokens = tokens[:, self.sample_begin:]
 
-        text = [self.tokenizer.decode(self.current_tokens.tolist()[0]).strip()]
-        new_text = [self.tokenizer.decode(new_tokens.tolist()[0]).strip()]
+        text = self.tokenizer.decode(self.current_tokens.tolist()[0]).strip()
+        new_text = self.tokenizer.decode(new_tokens.tolist()[0]).strip()
 
         return DecodingResult(
             text=text,
